@@ -1,0 +1,281 @@
+#install.packages("readxl")
+#install.packages("colorspace")
+#install.packages("tidyverse")
+#install.packages("ggplot2")
+#install.packages("xlsx")
+rm(list = ls())
+library("ggplot2")
+library("tidyverse")
+library("readxl")
+library("xlsx")
+#library(imfa)
+
+
+replacezero = function(x) "[<-"(x, !x | is.na(x), min(x[x > 0], na.rm = TRUE) / 2)
+
+sumnorm <- function(z) {
+  colsum <- apply(z, 2, sum)
+  rv <- sweep(z, 2, colsum, "/")
+  return(rv)
+}
+
+#Reading data
+dane1 <- read_xlsx("C:/Users/zofru/Desktop/Projekt/dane_dla_studentow_pary_wiazane.xlsx", "pre_shift", na = "---")
+dane2 <- read_xlsx("C:/Users/zofru/Desktop/Projekt/dane_dla_studentow_pary_wiazane.xlsx", "post_shift", na = "---")
+
+rawData1 <- data.frame(dane1)
+rawData2 <- data.frame(dane2)
+
+dataPre <- as.data.frame(t(apply(rawData1, 2, replacezero)))
+dataPost <- as.data.frame(t(apply(rawData2, 2, replacezero)))
+
+dataTotal <- cbind(dataPre, dataPost)
+
+#Code for flipping the data dimensions
+#Rotating data because that was the easiest
+dataTotalRotated <- t(dataTotal)
+colnames(dataTotalRotated) <- dataTotal[,1]
+
+flippedPre <- t(dataPre)
+colnames(flippedPre) <- dataPre[, 1]
+
+flippedPost <- t(dataPost)
+colnames(flippedPost) <- dataPost[, 1]
+
+#1 for rows, 2 for columns
+#Returns mean of each column in an array - mean of each metabolite separately
+meanPre <- apply(flippedPre, 2, mean)
+meanPost <- apply(flippedPost, 2, mean)
+FCArrayTest <- meanPre/meanPost
+
+#How the levels changed after shift compared to before it
+meanDiff <- array(length(meanPost))
+for(i in 1:length(meanPost))
+  meanDiff[i] = meanPost[i] - meanPre[i]
+
+#Just statistics, in case it was needed
+maxDiff <- max(meanDiff)
+minDiff <- min(meanDiff)
+avgDiff <- mean(meanDiff)
+
+
+#Calculating P-values to know what to focus on
+sumNormedData <- sumnorm(dataTotalRotated)
+logTransformedData <- log2(sumNormedData)
+pvalues <- apply(logTransformedData, 2, function(x) { t.test(x[1:27], x[28:54])$p.value } )
+volcanoData <- data.frame(matrix(NA, nrow = length(pvalues), ncol = 2))
+
+#Joining into one for ease of manipulation and passing to functions
+for (i in 1:length(pvalues)) {
+  volcanoData[i, 1] = meanDiff[i]
+  volcanoData[i, 2] = -pvalues[i]
+}
+
+colnames(volcanoData) = c("x", "y")
+
+#Adding column so the program knows how to colour the points
+#If change overall <0.3, not interesting
+#If p-value above 0.05, not interesting
+volcanoData$change <- ifelse(volcanoData$x> 0.3 & volcanoData$y>-0.05,"Post",
+                              ifelse(volcanoData$x< -0.3 & volcanoData$y>-0.05,"PRE",
+                                     "nochange"))
+
+
+#Theme of the chart
+my.theme <- theme(axis.text = element_text(colour="black", size=15),
+                  text = element_text(size=16),
+                  title = element_text(size=16, face="bold", vjust=2),
+                  panel.background = element_rect(fill = 'gray95',
+                                                  colour = "black", 
+                                                  size=1),
+                  axis.title.x=  element_text(vjust=-0.45),
+                  axis.title.y = element_text(vjust=1.2),
+                  axis.ticks = element_line(colour="black"),
+                  axis.line = element_line(),
+                  panel.grid.major = element_line(colour = "gray65"),
+                  panel.grid.minor = element_line(colour = "white"),
+                  legend.title = element_text(size=16, face="bold"),
+                  legend.text = element_text(size = 16, face = "bold"),
+                  strip.text = element_text(size=14, face="bold"),
+                  strip.background = element_rect(fill="gray90", colour="black", size=1))
+
+
+#Parameters for aesthetics
+xpos <- c(-0.5, 1)
+ypos <- c(-1, -1)
+label <- c("Higher in Pre","Higher Post")
+grp <- c("Pre-Shift","Post-Shift")
+plottext <- data.frame(xpos, ypos, Label=label, stage=grp)
+
+
+#Plot volcano
+volcanoPlot <- 
+  ggplot(volcanoData, aes(x, y))+
+   geom_hline(yintercept = -0.05, size = 1.0, colour="#FF3030") +
+   geom_vline(xintercept = 0.3, size = 0.7, colour="#FF3030") +
+   geom_vline(xintercept = -0.3, size = 0.7, colour="#FF3030") +
+   ggtitle("Volcano plot of metabolite changes") +
+   xlab("Difference between post and pre shift") +
+   ylab("-P-value") +
+  geom_point(size=2.5, shape=21, aes(fill=change)) +
+  scale_fill_manual(name='Change',values=c("#FFF68F", "#FF3030", "#228B22"),
+                    guide="none") +
+   geom_text(data=plottext, aes(xpos, ypos, label=Label), 
+             size=5, color=c("#228B22","#FF3030"),
+             fontface="bold", show.legend=TRUE) +
+  my.theme
+
+
+dataTogetherTest <- cbind(meanDiff, FCArrayTest, pvalues)
+
+rownames(dataTogetherPost) <- dataTotal[,1]
+DF_Compiled_Test <- data.frame(dataTogetherPost)
+DF_Compiled_Test <- DF_Compiled_Test[-c(1)]
+
+for (i in 642) {
+  row.names(DF_Compiled_Test)[i] = paste("metabolit ", paste(i))
+}
+
+print(paste("metabolit", 1))
+
+#Creating Excel file, each row is one metabolite
+write.xlsx(df, file = "Vulcan_data_compiled_Test.xlsx", sheetName = "Sheet1", 
+           col.names = TRUE, row.names = TRUE, append = FALSE)
+
+#================================================
+#============CONTROL GROUP=======================
+#================================================
+
+dane1 <- read_excel("dane_dla_studentow_pary_wiazane.xlsx", "pre_shift", na = "---")
+dane2 <- read_excel("dane_dla_studentow_pary_wiazane.xlsx", "post_shift", na = "---")
+
+rawData1 <- data.frame(dane1)
+rawData2 <- data.frame(dane2)
+
+dataPre <- as.data.frame(t(apply(rawData1, 2, replacezero)))
+dataPost <- as.data.frame(t(apply(rawData2, 2, replacezero)))
+
+dataTotal <- cbind(dataPre, dataPost)
+
+#Code for flipping the data dimensions
+#Rotating data because that was the easiest
+dataTotalRotated <- t(dataTotal)
+colnames(dataTotalRotated) <- dataTotal[,1]
+
+flippedPre <- t(dataPre)
+colnames(flippedPre) <- dataPre[, 1]
+
+flippedPost <- t(dataPost)
+colnames(flippedPost) <- dataPost[, 1]
+
+#1 for rows, 2 for columns
+#Returns mean of each column in an array - mean of each metabolite separately
+meanPre <- apply(flippedPre, 2, mean)
+meanPost <- apply(flippedPost, 2, mean)
+FCArrayControl <- meanPre/meanPost
+
+#How the levels changed after shift compared to before it
+meanDiff <- array(length(meanPost))
+for(i in 1:length(meanPost))
+  meanDiff[i] = meanPost[i] - meanPre[i]
+
+#Just statistics, in case it was needed
+maxDiff <- max(meanDiff)
+minDiff <- min(meanDiff)
+avgDiff <- mean(meanDiff)
+
+
+#Calculating P-values to know what to focus on
+sumNormedData <- sumnorm(dataTotalRotated)
+logTransformedData <- log2(sumNormedData)
+pvalues <- apply(logTransformedData, 2, function(x) { t.test(x[1:13], x[14:26])$p.value } )
+volcanoData <- data.frame(matrix(NA, nrow = length(pvalues), ncol = 2))
+
+#Joining into one for ease of manipulation and passing to functions
+for (i in 1:length(pvalues)) {
+  volcanoData[i, 1] = meanDiff[i]
+  volcanoData[i, 2] = -pvalues[i]
+}
+
+colnames(volcanoData) = c("x", "y")
+
+#Adding column so the program knows how to colour the points
+#If change overall <0.3, not interesting
+#If p-value above 0.05, not interesting
+volcanoData$change <- ifelse(volcanoData$x> 0.3 & volcanoData$y>-0.05,"Post",
+                             ifelse(volcanoData$x< -0.3 & volcanoData$y>-0.05,"PRE",
+                                    "nochange"))
+
+
+dataTogetherControl <- cbind(meanDiff, FCArrayControl, pvalues)
+
+rownames(dataTogetherControl) <- dataTotal[,1]
+DF_Compiled_Control <- data.frame(dataTogetherControl)
+DF_Compiled_Control <- DF_Compiled_Control[-c(1)]
+
+for (i in 642) {
+  row.names(DF_Compiled_Control)[i] = paste("metabolit ", paste(i))
+}
+
+#Creating Excel file, each row is one metabolite
+write.xlsx(df, file = "Vulcan_data_compiled_Control.xlsx", sheetName = "Sheet1", 
+           col.names = TRUE, row.names = TRUE, append = FALSE)
+
+
+#Theme of the chart
+my.theme <- theme(axis.text = element_text(colour="black", size=15),
+                  text = element_text(size=16),
+                  title = element_text(size=16, face="bold", vjust=2),
+                  panel.background = element_rect(fill = 'gray95',
+                                                  colour = "black", 
+                                                  size=1),
+                  axis.title.x=  element_text(vjust=-0.45),
+                  axis.title.y = element_text(vjust=1.2),
+                  axis.ticks = element_line(colour="black"),
+                  axis.line = element_line(),
+                  panel.grid.major = element_line(colour = "gray65"),
+                  panel.grid.minor = element_line(colour = "white"),
+                  legend.title = element_text(size=16, face="bold"),
+                  legend.text = element_text(size = 16, face = "bold"),
+                  strip.text = element_text(size=14, face="bold"),
+                  strip.background = element_rect(fill="gray90", colour="black", size=1))
+
+
+#Parameters for aesthetics
+xpos <- c(-0.5, 1)
+ypos <- c(-1, -1)
+label <- c("Higher in Pre","Higher Post")
+grp <- c("Pre-Shift","Post-Shift")
+plottext <- data.frame(xpos, ypos, Label=label, stage=grp)
+
+
+#Plot volcano
+volcanoPlotControl <- 
+  ggplot(volcanoData, aes(x, y, label=x))+
+  geom_hline(yintercept = -0.05, size = 1.0, colour="#FF3030") +
+  geom_vline(xintercept = 0.3, size = 0.7, colour="#FF3030") +
+  geom_vline(xintercept = -0.3, size = 0.7, colour="#FF3030") +
+  ggtitle("Volcano plot of metabolite changes") +
+  xlab("Difference between post and pre shift") +
+  ylab("-P-value") +
+  geom_point(size=2.5, shape=21, aes(fill=change)) +
+  scale_fill_manual(name='Change',values=c("#FFF68F", "#FF3030", "#228B22"),
+                    guide="none") + 
+  geom_text(data=plottext, aes(xpos, ypos, label=Label), 
+            size=5, color=c("#228B22","#FF3030"),
+            fontface="bold", show.legend=TRUE) +
+  my.theme
+
+
+#mfrow(1, 2)
+#Show volcano
+volcanoPlotControl
+volcanoPlot
+
+png(file="volcanoContrtol.png", height=3000, width=5000, res=500)
+volcanoPlotControl
+dev.off()
+
+png(file="volcanoTest.png", height=3000, width=5000, res=500)
+volcanoPlot
+dev.off()
